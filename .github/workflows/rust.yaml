@@ -23,13 +23,12 @@ jobs:
           override: true
 
       - name: Build
-        working-directory: ./filo-clipboard
         run: cargo build --release
 
       - name: Release
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: ./filo-clipboard/target/release/filo-clipboard.exe
+          files: ./target/release/filo-clipboard.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
