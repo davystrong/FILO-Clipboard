@@ -5,6 +5,7 @@ pub mod winapi_functions;
 use cli::Opts;
 use clipboard_win::{formats, get_clipboard, set_clipboard};
 use core::ptr;
+use key_utils::is_key_pressed;
 use lazy_static::lazy_static;
 use std::collections::VecDeque;
 use std::ffi::CString;
@@ -64,7 +65,13 @@ extern "system" fn message_watcher_proc(
             if w_param == 1
             /*Ctrl + Shift + V*/
             {
-                //TODO: Return to previous state (GetAsyncKeyState)
+                fn old_state(v_key: i32) -> u32 {
+                    match is_key_pressed(v_key) {
+                        Ok(false) => winuser::KEYEVENTF_KEYUP,
+                        _ => 0,
+                    }
+                }
+
                 match trigger_keys(
                     &[
                         winuser::VK_SHIFT as u16,
@@ -78,9 +85,9 @@ extern "system" fn message_watcher_proc(
                         winuser::KEYEVENTF_KEYUP,
                         winuser::KEYEVENTF_KEYUP,
                         winuser::KEYEVENTF_KEYUP,
-                        0,
-                        0,
-                        0,
+                        old_state(winuser::VK_CONTROL),
+                        old_state('V' as i32),
+                        old_state(winuser::VK_SHIFT),
                     ],
                 ) {
                     Ok(_) => {
@@ -167,7 +174,7 @@ pub fn run(opts: Opts) {
     .unwrap();
 
     let mut lp_msg = winuser::MSG::default();
-    println!("Ready");
+    // println!("Ready");
     unsafe {
         while winuser::GetMessageA(&mut lp_msg, ptr::null_mut(), 0, 0) != 0 {
             winuser::TranslateMessage(&lp_msg);
