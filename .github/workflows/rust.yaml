@@ -24,7 +24,7 @@ jobs:
 
       - name: Build
         working-directory: ./filo-clipboard
-        run: cargo build --all --release
+        run: cargo build --release
 
       - name: Release
         uses: softprops/action-gh-release@v1
