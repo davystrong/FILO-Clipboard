@@ -19,6 +19,7 @@ mod tests {
     }
 }
 
+/// Create an input struct from the key code and event
 fn create_input(key_code: u16, event: u32) -> winuser::INPUT {
     let kb_input_u = unsafe {
         let mut kb_input_u = winuser::INPUT_u::default();
@@ -38,6 +39,7 @@ fn create_input(key_code: u16, event: u32) -> winuser::INPUT {
     }
 }
 
+/// Trigger thef list o key events through the Windows api
 pub fn trigger_keys(
     key_codes: &[u16],
     events: &[u32],
@@ -56,6 +58,7 @@ pub fn trigger_keys(
     )
 }
 
+/// Get the speed at which the keyboard repeats a keystroke
 pub fn get_keyboard_speed() -> Result<u32, error_code::ErrorCode<error_code::SystemCategory>> {
     let mut raw_speed = 0u32;
     unsafe {
@@ -79,7 +82,9 @@ pub fn get_max_key_delay() -> Result<u16, error_code::ErrorCode<error_code::Syst
     get_keyboard_speed().map(|raw_speed| raw_speed_to_millis(raw_speed as u8) * 8 / 10)
 }
 
-pub fn is_key_pressed(v_key: i32) -> Result<bool, error_code::ErrorCode<error_code::SystemCategory>> {
+pub fn is_key_pressed(
+    v_key: i32,
+) -> Result<bool, error_code::ErrorCode<error_code::SystemCategory>> {
     // Mask as per https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getasynckeystate
     let mask = 1i16 << 15;
     get_async_key_state(v_key).map(|state| state & mask != 0)

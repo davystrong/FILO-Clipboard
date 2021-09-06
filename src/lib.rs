@@ -13,15 +13,6 @@ use std::mem;
 use std::sync::{atomic, RwLock};
 use winapi::um::winuser;
 
-const MAX_RETRIES: u8 = 10;
-
-static INTERNAL_UPDATE: atomic::AtomicBool = atomic::AtomicBool::new(false);
-static MAX_HISTORY: atomic::AtomicUsize = atomic::AtomicUsize::new(10);
-
-lazy_static! {
-    static ref CB_HISTORY: RwLock<VecDeque<String>> = RwLock::new(VecDeque::new());
-}
-
 use crate::{
     key_utils::trigger_keys,
     winapi_functions::{
@@ -29,6 +20,16 @@ use crate::{
         remove_clipboard_format_listener, sleep, unregister_hotkey,
     },
 };
+
+const MAX_RETRIES: u8 = 10;
+
+// Have to use global variables to allow access from C callback
+static INTERNAL_UPDATE: atomic::AtomicBool = atomic::AtomicBool::new(false);
+static MAX_HISTORY: atomic::AtomicUsize = atomic::AtomicUsize::new(10);
+
+lazy_static! {
+    static ref CB_HISTORY: RwLock<VecDeque<String>> = RwLock::new(VecDeque::new());
+}
 
 extern "system" fn message_watcher_proc(
     h_wnd: *mut winapi::shared::windef::HWND__,
@@ -135,8 +136,10 @@ extern "system" fn message_watcher_proc(
 }
 
 pub fn run(opts: Opts) {
+    // Move options to global variables
     MAX_HISTORY.store(opts.max_history, atomic::Ordering::Relaxed);
 
+    // Create and register a class
     let class_name = "filo-clipboard_class";
     let window_name = "filo-clipboard";
 
@@ -157,6 +160,8 @@ pub fn run(opts: Opts) {
     };
 
     register_class_ex_a(&lp_wnd_class).unwrap();
+
+    // Create the invisible window
     create_window_ex_a(
         winuser::WS_EX_LEFT,
         class_name,
@@ -173,6 +178,7 @@ pub fn run(opts: Opts) {
     )
     .unwrap();
 
+    // Event loop
     let mut lp_msg = winuser::MSG::default();
     // println!("Ready");
     unsafe {
