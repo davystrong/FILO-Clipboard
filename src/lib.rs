@@ -1,6 +1,5 @@
 pub mod cli;
 pub mod key_utils;
-pub mod winapi_abstractions;
 pub mod winapi_functions;
 
 use cli::Opts;
