@@ -29,7 +29,7 @@ pub fn create_window_ex_a<'a>(
     h_menu: Option<&'a mut winapi::shared::windef::HMENU__>,
     h_instance: Option<&'a mut winapi::shared::minwindef::HINSTANCE__>,
     lp_param: Option<&'a mut std::ffi::c_void>,
-) -> Result<&'a winapi::shared::windef::HWND__, error_code::ErrorCode<error_code::SystemCategory>> {
+) -> Result<&'a mut winapi::shared::windef::HWND__, error_code::ErrorCode<error_code::SystemCategory>> {
     //Lifetimes assuming worst case scenario
     let class_name = CString::new(lp_class_name).unwrap();
     let window_name = CString::new(lp_window_name).unwrap();
@@ -50,7 +50,7 @@ pub fn create_window_ex_a<'a>(
         )
     } {
         h_wnd if h_wnd.is_null() => Err(SystemError::last()),
-        h_wnd => Ok(unsafe { &*h_wnd }),
+        h_wnd => Ok(unsafe { &mut *h_wnd }),
     }
 }
 

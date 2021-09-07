@@ -84,7 +84,6 @@ dependencies = [
  "clap",
  "clipboard-win",
  "error-code",
- "lazy_static",
  "winapi",
 ]
 
