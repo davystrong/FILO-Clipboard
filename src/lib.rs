@@ -1,9 +1,11 @@
 pub mod cli;
+pub mod clipboard_extras;
 pub mod key_utils;
+pub mod winapi_abstractions;
 pub mod winapi_functions;
 
 use cli::Opts;
-use clipboard_win::{formats, get_clipboard, set_clipboard};
+use clipboard_win::{formats, get_clipboard, set_clipboard, Clipboard, EnumFormats, Getter};
 use core::ptr;
 use key_utils::is_key_pressed;
 use std::collections::VecDeque;
@@ -11,6 +13,8 @@ use std::ffi::CString;
 use std::mem;
 use winapi::um::winuser;
 
+use crate::clipboard_extras::{set_all, ClipboardItem};
+use crate::winapi_abstractions::{ClipboardListener, HotkeyListener};
 use crate::{
     key_utils::trigger_keys,
     winapi_functions::{
@@ -20,6 +24,42 @@ use crate::{
 };
 
 const MAX_RETRIES: u8 = 10;
+const SIMILARITY_THRESHOLD: u8 = 230;
+
+#[derive(Debug, PartialEq)]
+enum ComparisonResult {
+    Same,
+    Similar,
+    Different,
+}
+
+fn compare_data(
+    cb_data: &[ClipboardItem],
+    prev_cb_data: &[ClipboardItem],
+    threshold: u8,
+) -> ComparisonResult {
+    match dbg!(cb_data.len(), prev_cb_data.len()) {
+        (0, 0) => ComparisonResult::Same,
+        (0, _) | (_, 0) => ComparisonResult::Different,
+        _ => {
+            let count_eq = cb_data
+                .iter()
+                .zip(prev_cb_data.iter())
+                .filter(|(x, y)| x == y)
+                .count();
+
+            let max_eq = *[cb_data.len(), prev_cb_data.len()].iter().max().unwrap();
+
+            if count_eq == max_eq {
+                ComparisonResult::Same
+            } else if count_eq * 255 >= max_eq * threshold as usize {
+                ComparisonResult::Similar
+            } else {
+                ComparisonResult::Different
+            }
+        }
+    }
+}
 
 pub fn run(opts: Opts) {
     // Create and register a class
@@ -63,6 +103,7 @@ pub fn run(opts: Opts) {
 
     // Register the clipboard listener to the message window
     add_clipboard_format_listener(h_wnd).unwrap();
+    // let _clipboard_listener = ClipboardListener::add(h_wnd);
 
     // Register the hotkey listener to the message window
     register_hotkey(
@@ -72,38 +113,90 @@ pub fn run(opts: Opts) {
         'V' as u32,
     )
     .unwrap();
+    // let _hotkey_listener = HotkeyListener::add(
+    //     h_wnd,
+    //     1,
+    //     (winuser::MOD_CONTROL | winuser::MOD_SHIFT) as u32,
+    //     'V' as u32,
+    // );
 
     // Event loop
-    let mut cb_history = VecDeque::<String>::new();
-    let mut internal_update = false;
+    let mut cb_history = VecDeque::<Vec<_>>::new();
+    let mut last_internal_update: Option<Vec<ClipboardItem>> = None;
+    let mut skip_clipboard = false;
 
     let mut lp_msg = winuser::MSG::default();
     #[cfg(debug_assertions)]
     println!("Ready");
     while unsafe { winuser::GetMessageA(&mut lp_msg, h_wnd, 0, 0) != 0 } {
-        // unsafe { winuser::TranslateMessage(&lp_msg) };
-
         match lp_msg.message {
             winuser::WM_CLIPBOARDUPDATE => {
-                if !internal_update {
-                    if let Ok(clipboard_data) = get_clipboard::<String, _>(formats::Unicode) {
-                        cb_history.push_front(clipboard_data);
-                        cb_history.truncate(opts.max_history);
+                if dbg!(skip_clipboard) {
+                    skip_clipboard = false;
+                } else if let Ok(_clip) = Clipboard::new_attempts(10) {
+                    let cb_data: Vec<_> = EnumFormats::new()
+                        .filter_map(|format| {
+                            let mut clipboard_data = Vec::new();
+                            if let Ok(bytes) =
+                                formats::RawData(format).read_clipboard(&mut clipboard_data)
+                            {
+                                if bytes != 0 {
+                                    return Some(ClipboardItem {
+                                        format,
+                                        content: clipboard_data,
+                                    });
+                                }
+                            }
+                            None
+                        })
+                        .collect();
+                    if !cb_data.is_empty() {
+                        //If let chains would do this far more neatly
+                        let prev_item_similarity = last_internal_update
+                            .as_ref()
+                            .map(|last_update| {
+                                compare_data(&cb_data, last_update, SIMILARITY_THRESHOLD)
+                            })
+                            .unwrap_or(ComparisonResult::Different);
+                        let current_item_similarity = cb_history
+                            .front()
+                            .map(|last_update| {
+                                compare_data(&cb_data, last_update, SIMILARITY_THRESHOLD)
+                            })
+                            .unwrap_or(ComparisonResult::Different);
+
+                        match (prev_item_similarity, current_item_similarity) {
+                            (_, ComparisonResult::Same) | (ComparisonResult::Same, _) => {
+                                dbg!(1);
+                            }
+                            (_, ComparisonResult::Similar) | (ComparisonResult::Similar, _) => {
+                                dbg!(2);
+                                *cb_history.front_mut().unwrap() = cb_data;
+                                last_internal_update = None;
+                            }
+                            (ComparisonResult::Different, ComparisonResult::Different) => {
+                                dbg!(3);
+                                cb_history.push_front(cb_data);
+                                cb_history.truncate(opts.max_history);
+                                last_internal_update = None;
+                            }
+                        }
                     }
-                } else {
-                    internal_update = false;
                 }
             }
             winuser::WM_HOTKEY => {
-                if lp_msg.wParam == 1
-                /*Ctrl + Shift + V*/
-                {
+                if lp_msg.wParam == 1 {
+                    /*Ctrl + Shift + V*/
+                    dbg!("Ctrl+Shift+V");
                     fn old_state(v_key: i32) -> u32 {
                         match is_key_pressed(v_key) {
                             Ok(false) => winuser::KEYEVENTF_KEYUP,
                             _ => 0,
                         }
                     }
+
+                    let old_control = old_state(winuser::VK_CONTROL);
+                    let old_v = old_state('V' as i32);
 
                     match trigger_keys(
                         &[
@@ -116,20 +209,33 @@ pub fn run(opts: Opts) {
                         ],
                         &[
                             winuser::KEYEVENTF_KEYUP,
-                            winuser::KEYEVENTF_KEYUP,
-                            winuser::KEYEVENTF_KEYUP,
-                            old_state(winuser::VK_CONTROL),
-                            old_state('V' as i32),
+                            if old_control == 0 {
+                                winuser::KEYEVENTF_KEYUP
+                            } else {
+                                0
+                            },
+                            if old_v == 0 {
+                                winuser::KEYEVENTF_KEYUP
+                            } else {
+                                0
+                            },
+                            old_control,
+                            old_v,
                             old_state(winuser::VK_SHIFT),
                         ],
                     ) {
                         Ok(_) => {
                             // Sleep for less time than the lowest possible automatic keystroke repeat ((1000ms / 30) * 0.8)
                             sleep(25);
-                            cb_history.pop_front();
-                            if let Some(last_addition) = cb_history.front() {
-                                internal_update = true;
-                                let _ = set_clipboard(formats::Unicode, last_addition);
+                            last_internal_update = cb_history.pop_front(); //This
+                            if let Some(prev_item) = cb_history.front() {
+                                // last_internal_update = cb_history_front;
+                                skip_clipboard = true;
+                                //Was here
+                                if let Ok(_clip) = Clipboard::new_attempts(10) {
+                                    dbg!("Setting clipboard to next value");
+                                    let _ = set_all(prev_item);
+                                }
                             }
                         }
                         Err(_) => {

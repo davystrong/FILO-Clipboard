@@ -29,7 +29,8 @@ pub fn create_window_ex_a<'a>(
     h_menu: Option<&'a mut winapi::shared::windef::HMENU__>,
     h_instance: Option<&'a mut winapi::shared::minwindef::HINSTANCE__>,
     lp_param: Option<&'a mut std::ffi::c_void>,
-) -> Result<&'a mut winapi::shared::windef::HWND__, error_code::ErrorCode<error_code::SystemCategory>> {
+) -> Result<&'a mut winapi::shared::windef::HWND__, error_code::ErrorCode<error_code::SystemCategory>>
+{
     //Lifetimes assuming worst case scenario
     let class_name = CString::new(lp_class_name).unwrap();
     let window_name = CString::new(lp_window_name).unwrap();
@@ -123,5 +124,30 @@ pub fn get_async_key_state(
     match unsafe { winuser::GetAsyncKeyState(v_key) } {
         0 => Err(SystemError::last()),
         state => Ok(state),
+    }
+}
+
+pub fn open_clipboard(
+    h_wnd: &mut winapi::shared::windef::HWND__,
+) -> Result<(), error_code::ErrorCode<error_code::SystemCategory>> {
+    match unsafe { winuser::OpenClipboard(h_wnd) } {
+        0 => Err(SystemError::last()),
+        _ => Ok(()),
+    }
+}
+
+pub fn close_clipboard() -> Result<(), error_code::ErrorCode<error_code::SystemCategory>> {
+    match unsafe { winuser::CloseClipboard() } {
+        0 => Err(SystemError::last()),
+        _ => Ok(()),
+    }
+}
+
+pub fn get_clipboard_data(
+    u_format: u32,
+) -> Result<*mut std::ffi::c_void, error_code::ErrorCode<error_code::SystemCategory>> {
+    match unsafe { winuser::GetClipboardData(u_format) } {
+        handle if handle.is_null() => Err(SystemError::last()),
+        handle => Ok(handle),
     }
 }
