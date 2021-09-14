@@ -5,7 +5,7 @@ pub mod winapi_abstractions;
 pub mod winapi_functions;
 
 use cli::Opts;
-use clipboard_win::{formats, get_clipboard, set_clipboard, Clipboard, EnumFormats, Getter};
+use clipboard_win::{formats, Clipboard, EnumFormats, Getter};
 use core::ptr;
 use key_utils::is_key_pressed;
 use std::collections::VecDeque;
@@ -14,7 +14,6 @@ use std::mem;
 use winapi::um::winuser;
 
 use crate::clipboard_extras::{set_all, ClipboardItem};
-use crate::winapi_abstractions::{ClipboardListener, HotkeyListener};
 use crate::{
     key_utils::trigger_keys,
     winapi_functions::{
@@ -38,14 +37,18 @@ fn compare_data(
     prev_cb_data: &[ClipboardItem],
     threshold: u8,
 ) -> ComparisonResult {
-    match dbg!(cb_data.len(), prev_cb_data.len()) {
+    match (cb_data.len(), prev_cb_data.len()) {
         (0, 0) => ComparisonResult::Same,
         (0, _) | (_, 0) => ComparisonResult::Different,
         _ => {
             let count_eq = cb_data
                 .iter()
-                .zip(prev_cb_data.iter())
-                .filter(|(x, y)| x == y)
+                .filter(
+                    |x| match prev_cb_data.iter().find(|y| x.format == y.format) {
+                        Some(y) => **x == *y,
+                        None => false,
+                    },
+                )
                 .count();
 
             let max_eq = *[cb_data.len(), prev_cb_data.len()].iter().max().unwrap();
@@ -59,6 +62,14 @@ fn compare_data(
             }
         }
     }
+}
+
+fn get_cb_text(cb_data: &[ClipboardItem]) -> String {
+    cb_data
+        .iter()
+        .find(|item| item.format == winuser::CF_TEXT)
+        .map(|res| String::from_utf8(res.content.clone()).unwrap())
+        .unwrap_or_default()
 }
 
 pub fn run(opts: Opts) {
@@ -131,9 +142,7 @@ pub fn run(opts: Opts) {
     while unsafe { winuser::GetMessageA(&mut lp_msg, h_wnd, 0, 0) != 0 } {
         match lp_msg.message {
             winuser::WM_CLIPBOARDUPDATE => {
-                if dbg!(skip_clipboard) {
-                    skip_clipboard = false;
-                } else if let Ok(_clip) = Clipboard::new_attempts(10) {
+                if let Ok(_clip) = Clipboard::new_attempts(10) {
                     let cb_data: Vec<_> = EnumFormats::new()
                         .filter_map(|format| {
                             let mut clipboard_data = Vec::new();
@@ -150,35 +159,36 @@ pub fn run(opts: Opts) {
                             None
                         })
                         .collect();
-                    if !cb_data.is_empty() {
-                        //If let chains would do this far more neatly
-                        let prev_item_similarity = last_internal_update
-                            .as_ref()
-                            .map(|last_update| {
-                                compare_data(&cb_data, last_update, SIMILARITY_THRESHOLD)
-                            })
-                            .unwrap_or(ComparisonResult::Different);
-                        let current_item_similarity = cb_history
-                            .front()
-                            .map(|last_update| {
-                                compare_data(&cb_data, last_update, SIMILARITY_THRESHOLD)
-                            })
-                            .unwrap_or(ComparisonResult::Different);
 
-                        match (prev_item_similarity, current_item_similarity) {
-                            (_, ComparisonResult::Same) | (ComparisonResult::Same, _) => {
-                                dbg!(1);
-                            }
-                            (_, ComparisonResult::Similar) | (ComparisonResult::Similar, _) => {
-                                dbg!(2);
-                                *cb_history.front_mut().unwrap() = cb_data;
-                                last_internal_update = None;
-                            }
-                            (ComparisonResult::Different, ComparisonResult::Different) => {
-                                dbg!(3);
-                                cb_history.push_front(cb_data);
-                                cb_history.truncate(opts.max_history);
-                                last_internal_update = None;
+                    if !cb_data.is_empty() {
+                        if skip_clipboard {
+                            skip_clipboard = false;
+                        } else {
+                            //If let chains would do this far more neatly
+                            let prev_item_similarity = last_internal_update
+                                .as_ref()
+                                .map(|last_update| {
+                                    compare_data(&cb_data, last_update, SIMILARITY_THRESHOLD)
+                                })
+                                .unwrap_or(ComparisonResult::Different);
+                            let current_item_similarity = cb_history
+                                .front()
+                                .map(|last_update| {
+                                    compare_data(&cb_data, last_update, SIMILARITY_THRESHOLD)
+                                })
+                                .unwrap_or(ComparisonResult::Different);
+
+                            match (prev_item_similarity, current_item_similarity) {
+                                (_, ComparisonResult::Same) | (ComparisonResult::Same, _) => {}
+                                (_, ComparisonResult::Similar) | (ComparisonResult::Similar, _) => {
+                                    *cb_history.front_mut().unwrap() = cb_data;
+                                    last_internal_update = None;
+                                }
+                                (ComparisonResult::Different, ComparisonResult::Different) => {
+                                    cb_history.push_front(cb_data);
+                                    cb_history.truncate(opts.max_history);
+                                    last_internal_update = None;
+                                }
                             }
                         }
                     }
@@ -187,7 +197,6 @@ pub fn run(opts: Opts) {
             winuser::WM_HOTKEY => {
                 if lp_msg.wParam == 1 {
                     /*Ctrl + Shift + V*/
-                    dbg!("Ctrl+Shift+V");
                     fn old_state(v_key: i32) -> u32 {
                         match is_key_pressed(v_key) {
                             Ok(false) => winuser::KEYEVENTF_KEYUP,
@@ -227,13 +236,10 @@ pub fn run(opts: Opts) {
                         Ok(_) => {
                             // Sleep for less time than the lowest possible automatic keystroke repeat ((1000ms / 30) * 0.8)
                             sleep(25);
-                            last_internal_update = cb_history.pop_front(); //This
+                            last_internal_update = cb_history.pop_front();
                             if let Some(prev_item) = cb_history.front() {
-                                // last_internal_update = cb_history_front;
                                 skip_clipboard = true;
-                                //Was here
                                 if let Ok(_clip) = Clipboard::new_attempts(10) {
-                                    dbg!("Setting clipboard to next value");
                                     let _ = set_all(prev_item);
                                 }
                             }

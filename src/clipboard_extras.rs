@@ -91,7 +91,7 @@ impl RawMem {
     }
 }
 
-#[derive(PartialEq, Debug, Default)]
+#[derive(PartialEq, Debug, Default, Clone)]
 pub struct ClipboardItem {
     pub format: u32,
     pub content: Vec<u8>,
