@@ -177,14 +177,32 @@ pub fn run(opts: Opts) {
                                     compare_data(&cb_data, last_update, SIMILARITY_THRESHOLD)
                                 })
                                 .unwrap_or(ComparisonResult::Different);
+                            #[cfg(debug_assertions)]
+                            {
+                                if let Some(cb_data) = last_internal_update.as_ref() {
+                                    println!("prev_item: {}", get_cb_text(cb_data));
+                                }
+
+                                if let Some(cb_data) = cb_history.front() {
+                                    println!("current_item: {}", get_cb_text(cb_data));
+                                }
+
+                                println!("New item: {}", get_cb_text(&cb_data));
+                            }
 
                             match (prev_item_similarity, current_item_similarity) {
                                 (_, ComparisonResult::Same) | (ComparisonResult::Same, _) => {}
                                 (_, ComparisonResult::Similar) | (ComparisonResult::Similar, _) => {
-                                    *cb_history.front_mut().unwrap() = cb_data;
-                                    last_internal_update = None;
+                                    #[cfg(debug_assertions)]
+                                    println!("Updating last element: {}", get_cb_text(&cb_data));
+                                    if let Some(cb_history_front) = cb_history.front_mut() {
+                                        *cb_history_front = cb_data;
+                                        last_internal_update = None;
+                                    }
                                 }
                                 (ComparisonResult::Different, ComparisonResult::Different) => {
+                                    #[cfg(debug_assertions)]
+                                    println!("Appending to history: {}", get_cb_text(&cb_data));
                                     cb_history.push_front(cb_data);
                                     cb_history.truncate(opts.max_history);
                                     last_internal_update = None;
@@ -197,15 +215,14 @@ pub fn run(opts: Opts) {
             winuser::WM_HOTKEY => {
                 if lp_msg.wParam == 1 {
                     /*Ctrl + Shift + V*/
+                    #[cfg(debug_assertions)]
+                    dbg!("Ctrl+Shift+V");
                     fn old_state(v_key: i32) -> u32 {
                         match is_key_pressed(v_key) {
                             Ok(false) => winuser::KEYEVENTF_KEYUP,
                             _ => 0,
                         }
                     }
-
-                    let old_control = old_state(winuser::VK_CONTROL);
-                    let old_v = old_state('V' as i32);
 
                     match trigger_keys(
                         &[
@@ -218,19 +235,11 @@ pub fn run(opts: Opts) {
                         ],
                         &[
                             winuser::KEYEVENTF_KEYUP,
-                            if old_control == 0 {
-                                winuser::KEYEVENTF_KEYUP
-                            } else {
-                                0
-                            },
-                            if old_v == 0 {
-                                winuser::KEYEVENTF_KEYUP
-                            } else {
-                                0
-                            },
-                            old_control,
-                            old_v,
-                            old_state(winuser::VK_SHIFT),
+                            winuser::KEYEVENTF_KEYUP,
+                            winuser::KEYEVENTF_KEYUP,
+                            0,
+                            0,
+                            0,
                         ],
                     ) {
                         Ok(_) => {
