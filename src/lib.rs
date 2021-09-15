@@ -10,7 +10,8 @@ use core::ptr;
 use key_utils::is_key_pressed;
 use std::collections::VecDeque;
 use std::ffi::CString;
-use std::mem;
+use std::sync::{Arc, RwLock};
+use std::{mem, thread};
 use winapi::um::winuser;
 
 use crate::clipboard_extras::{set_all, ClipboardItem};
@@ -68,7 +69,7 @@ fn get_cb_text(cb_data: &[ClipboardItem]) -> String {
     cb_data
         .iter()
         .find(|item| item.format == winuser::CF_TEXT)
-        .map(|res| String::from_utf8(res.content.clone()).unwrap())
+        .map(|res| String::from_utf8(res.content.clone()).unwrap_or_default())
         .unwrap_or_default()
 }
 
@@ -132,8 +133,8 @@ pub fn run(opts: Opts) {
     // );
 
     // Event loop
-    let mut cb_history = VecDeque::<Vec<_>>::new();
-    let mut last_internal_update: Option<Vec<ClipboardItem>> = None;
+    let mut cb_history = Arc::new(RwLock::new(VecDeque::<Vec<ClipboardItem>>::new()));
+    let last_internal_update = Arc::new(RwLock::new(Option::<Vec<ClipboardItem>>::None));
     let mut skip_clipboard = false;
 
     let mut lp_msg = winuser::MSG::default();
@@ -159,31 +160,62 @@ pub fn run(opts: Opts) {
                             None
                         })
                         .collect();
+                    let cb_data = Arc::new(cb_data);
 
                     if !cb_data.is_empty() {
                         if skip_clipboard {
                             skip_clipboard = false;
                         } else {
                             //If let chains would do this far more neatly
-                            let prev_item_similarity = last_internal_update
-                                .as_ref()
-                                .map(|last_update| {
-                                    compare_data(&cb_data, last_update, SIMILARITY_THRESHOLD)
+                            let prev_item_similarity_handle = {
+                                let cb_data = cb_data.clone();
+                                let last_internal_update = last_internal_update.clone();
+                                thread::spawn(move || {
+                                    last_internal_update
+                                        .read()
+                                        .unwrap()
+                                        .as_ref()
+                                        .map(|last_update| {
+                                            compare_data(
+                                                &cb_data,
+                                                last_update,
+                                                SIMILARITY_THRESHOLD,
+                                            )
+                                        })
+                                        .unwrap_or(ComparisonResult::Different)
                                 })
-                                .unwrap_or(ComparisonResult::Different);
-                            let current_item_similarity = cb_history
-                                .front()
-                                .map(|last_update| {
-                                    compare_data(&cb_data, last_update, SIMILARITY_THRESHOLD)
+                            };
+                            let current_item_similarity_handle = {
+                                let cb_data = cb_data.clone();
+                                let cb_history = cb_history.clone();
+                                thread::spawn(move || {
+                                    cb_history
+                                        .read()
+                                        .unwrap()
+                                        .front()
+                                        .map(|last_update| {
+                                            compare_data(
+                                                &cb_data,
+                                                last_update,
+                                                SIMILARITY_THRESHOLD,
+                                            )
+                                        })
+                                        .unwrap_or(ComparisonResult::Different)
                                 })
-                                .unwrap_or(ComparisonResult::Different);
+                            };
+
+                            let prev_item_similarity = prev_item_similarity_handle.join().unwrap();
+                            let current_item_similarity =
+                                current_item_similarity_handle.join().unwrap();
+
                             #[cfg(debug_assertions)]
                             {
-                                if let Some(cb_data) = last_internal_update.as_ref() {
+                                if let Some(cb_data) = last_internal_update.read().unwrap().as_ref()
+                                {
                                     println!("prev_item: {}", get_cb_text(cb_data));
                                 }
 
-                                if let Some(cb_data) = cb_history.front() {
+                                if let Some(cb_data) = cb_history.read().unwrap().front() {
                                     println!("current_item: {}", get_cb_text(cb_data));
                                 }
 
@@ -195,17 +227,20 @@ pub fn run(opts: Opts) {
                                 (_, ComparisonResult::Similar) | (ComparisonResult::Similar, _) => {
                                     #[cfg(debug_assertions)]
                                     println!("Updating last element: {}", get_cb_text(&cb_data));
-                                    if let Some(cb_history_front) = cb_history.front_mut() {
-                                        *cb_history_front = cb_data;
-                                        last_internal_update = None;
+                                    if let Some(cb_history_front) =
+                                        cb_history.write().unwrap().front_mut()
+                                    {
+                                        *cb_history_front = Arc::try_unwrap(cb_data).unwrap();
+                                        *last_internal_update.write().unwrap() = None;
                                     }
                                 }
                                 (ComparisonResult::Different, ComparisonResult::Different) => {
                                     #[cfg(debug_assertions)]
                                     println!("Appending to history: {}", get_cb_text(&cb_data));
-                                    cb_history.push_front(cb_data);
+                                    let mut cb_history = cb_history.write().unwrap();
+                                    cb_history.push_front(Arc::try_unwrap(cb_data).unwrap());
                                     cb_history.truncate(opts.max_history);
-                                    last_internal_update = None;
+                                    *last_internal_update.write().unwrap() = None;
                                 }
                             }
                         }
@@ -245,8 +280,9 @@ pub fn run(opts: Opts) {
                         Ok(_) => {
                             // Sleep for less time than the lowest possible automatic keystroke repeat ((1000ms / 30) * 0.8)
                             sleep(25);
-                            last_internal_update = cb_history.pop_front();
-                            if let Some(prev_item) = cb_history.front() {
+                            *last_internal_update.write().unwrap() =
+                                cb_history.write().unwrap().pop_front();
+                            if let Some(prev_item) = cb_history.read().unwrap().front() {
                                 skip_clipboard = true;
                                 if let Ok(_clip) = Clipboard::new_attempts(10) {
                                     let _ = set_all(prev_item);
