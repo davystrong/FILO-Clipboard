@@ -133,7 +133,7 @@ pub fn run(opts: Opts) {
     // );
 
     // Event loop
-    let mut cb_history = Arc::new(RwLock::new(VecDeque::<Vec<ClipboardItem>>::new()));
+    let cb_history = Arc::new(RwLock::new(VecDeque::<Vec<ClipboardItem>>::new()));
     let last_internal_update = Arc::new(RwLock::new(Option::<Vec<ClipboardItem>>::None));
     let mut skip_clipboard = false;
 
