@@ -80,6 +80,20 @@ pub fn remove_clipboard_format_listener(
     }
 }
 
+pub fn is_clipboard_format_available(format: u32) -> bool {
+    (unsafe { winuser::IsClipboardFormatAvailable(format) } != 0)
+}
+
+pub fn register_clipboard_format(
+    lpsz_format: &str,
+) -> Result<u32, error_code::ErrorCode<error_code::SystemCategory>> {
+    let lpsz_format = CString::new(lpsz_format).unwrap();
+    match unsafe { winuser::RegisterClipboardFormatA(lpsz_format.as_ptr()) } {
+        0 => Err(SystemError::last()),
+        id => Ok(id),
+    }
+}
+
 pub fn register_hotkey(
     h_wnd: &mut winapi::shared::windef::HWND__,
     id: i32,
