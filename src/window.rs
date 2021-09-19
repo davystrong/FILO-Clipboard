@@ -7,9 +7,9 @@ use crate::winapi_functions::{
     remove_clipboard_format_listener, unregister_hotkey,
 };
 
-type MessageType = u32;
-type WParam = usize;
-type LParam = isize;
+pub type MessageType = u32;
+pub type WParam = usize;
+pub type LParam = isize;
 
 pub struct Window<'a, T>
 where
@@ -65,7 +65,6 @@ where
 
         // Register the clipboard listener to the message window
         add_clipboard_format_listener(h_wnd).unwrap();
-        // let _clipboard_listener = ClipboardListener::add(h_wnd);
 
         // Register the hotkey listener to the message window
         register_hotkey(
@@ -74,7 +73,7 @@ where
             (winuser::MOD_CONTROL | winuser::MOD_SHIFT) as u32,
             'V' as u32,
         )
-        .unwrap();
+        .expect("Could not register hotkey. Is an instance already running?");
 
         Self {
             h_wnd,

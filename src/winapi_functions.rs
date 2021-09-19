@@ -3,10 +3,6 @@ use winapi::um::winuser;
 
 pub type SystemError = error_code::ErrorCode<error_code::SystemCategory>;
 
-pub fn sleep(dw_milliseconds: u32) {
-    unsafe { winapi::um::synchapi::Sleep(dw_milliseconds) };
-}
-
 pub fn register_class_ex_a(
     lp_wnd_class: &winuser::WNDCLASSEXA,
 ) -> Result<u16, error_code::ErrorCode<error_code::SystemCategory>> {
